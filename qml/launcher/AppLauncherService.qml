@@ -154,7 +154,13 @@ QtObject {
     if (appName) recordSelection(appName)
     var cmd = appExec
     if (isTerminal) cmd = service.terminal + " " + cmd
-    _appRunner.command = ["setsid", "-f", "sh", "-c", cmd]
+    var compositor = (Quickshell.env("XDG_CURRENT_DESKTOP") || "").toLowerCase()
+    var hasHyprSig = (Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || "") !== ""
+    if (compositor.indexOf("hypr") >= 0 || hasHyprSig) {
+      _appRunner.command = ["hyprctl", "dispatch", "exec", cmd]
+    } else {
+      _appRunner.command = ["setsid", "-f", "sh", "-c", cmd]
+    }
     _appRunner.running = true
   }
 
@@ -325,7 +331,11 @@ QtObject {
 
   // Start initial load or rebuild
   function start() {
-    if (service.appModel.count === 0) {
+    if (!buildCache.running && !loadApps.running) {
+      loadApps.running = true
+    }
+
+    if (service.appModel.count === 0 && !buildCache.running) {
       buildCache.running = true
     } else {
       updateFilteredModel()
