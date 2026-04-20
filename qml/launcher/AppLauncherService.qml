@@ -21,6 +21,7 @@ QtObject {
   property bool cacheLoading: false
   property int cacheProgress: 0
   property int cacheTotal: 0
+  property bool cacheLoaded: false
 
   // Data models
   property var appModel: ListModel {}
@@ -150,16 +151,26 @@ QtObject {
   // Launch an app, record selection for search ranking
   property var _appRunner: Process { command: ["true"] }
 
+  function shellQuote(value) {
+    return "'" + String(value).replace(/'/g, "'\"'\"'") + "'"
+  }
+
   function launchApp(appExec, isTerminal, appName) {
     if (appName) recordSelection(appName)
-    var cmd = appExec
-    if (isTerminal) cmd = service.terminal + " " + cmd
+    var cmd = String(appExec || "").trim()
+    if (cmd === "") return
+
+    if (isTerminal) {
+      cmd = String(service.terminal || "foot") + " -e " + cmd
+    }
+
     var compositor = (Quickshell.env("XDG_CURRENT_DESKTOP") || "").toLowerCase()
     var hasHyprSig = (Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || "") !== ""
     if (compositor.indexOf("hypr") >= 0 || hasHyprSig) {
       _appRunner.command = ["hyprctl", "dispatch", "exec", cmd]
     } else {
-      _appRunner.command = ["setsid", "-f", "sh", "-c", cmd]
+      var escaped = shellQuote(cmd)
+      _appRunner.command = ["bash", "-lc", "setsid -f bash -lc " + escaped + " >/dev/null 2>&1"]
     }
     _appRunner.running = true
   }
@@ -189,6 +200,7 @@ QtObject {
     }
     onExited: {
       service.cacheLoading = false
+      service.cacheLoaded = false
       service.appModel.clear()
       loadApps.running = true
     }
@@ -202,6 +214,9 @@ QtObject {
     ]
     running: false
     onRunningChanged: {
+      if (running) {
+        service.appModel.clear()
+      }
       if (!running) {
         service.updateFilteredModel()
       }
@@ -230,6 +245,12 @@ QtObject {
       }
     }
     onExited: {
+      service.cacheLoaded = service.appModel.count > 0
+      service._applyAppsConfig()
+      if (!service.cacheLoaded && !buildCache.running) {
+        buildCache.running = true
+        return
+      }
       service.updateFilteredModel()
     }
   }
@@ -324,6 +345,7 @@ QtObject {
     interval: 2000
     onTriggered: {
       if (!buildCache.running) {
+        service.cacheLoaded = false
         buildCache.running = true
       }
     }
@@ -331,14 +353,13 @@ QtObject {
 
   // Start initial load or rebuild
   function start() {
-    if (!buildCache.running && !loadApps.running) {
-      loadApps.running = true
+    if (buildCache.running || loadApps.running) return
+
+    if (service.cacheLoaded && service.appModel.count > 0) {
+      updateFilteredModel()
+      return
     }
 
-    if (service.appModel.count === 0 && !buildCache.running) {
-      buildCache.running = true
-    } else {
-      updateFilteredModel()
-    }
+    loadApps.running = true
   }
 }
